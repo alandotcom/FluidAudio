@@ -776,10 +776,10 @@ public final class SortformerDiarizer: Diarizer {
 
         featureBuffer.append(contentsOf: mel)
 
-        // Reverse the center-padded frame count formula to get actual samples consumed:
-        // numFrames = 1 + (audioCount + nFFT - winLength) / hopLength
-        // => audioCount = (numFrames - 1) * hopLength + winLength - nFFT
-        let samplesConsumed = (melLength - 1) * config.melStride + config.melWindow - melSpectrogram.nFFT
+        // For streaming continuity, consume hop-aligned samples regardless of center padding.
+        // Center padding affects frame *production* (via computeFlatTransposed) but not
+        // the hop-aligned consumption needed to maintain frame continuity across chunks.
+        let samplesConsumed = melLength * config.melStride
 
         if samplesConsumed <= audioBuffer.count {
             lastAudioSample = audioBuffer[samplesConsumed - 1]
