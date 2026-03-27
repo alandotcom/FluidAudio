@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Qwen3-ASR Model Configuration
 
-/// Configuration constants for the Qwen3-ASR-0.6B CoreML model.
+/// Configuration constants for the Qwen3-ASR-1.7B (Caspi) CoreML model.
 ///
 /// Architecture: audio_encoder -> embedding + merge -> 28 decoder layers -> lm_head
 /// The audio encoder processes mel spectrograms in fixed-size windows.
@@ -25,15 +25,15 @@ public enum Qwen3AsrConfig {
 
     // MARK: Encoder
 
-    public static let encoderDModel = 896
-    public static let encoderOutputDim = 1024
-    public static let encoderNumLayers = 18
-    public static let encoderNumHeads = 14
+    public static let encoderDModel = 1024
+    public static let encoderOutputDim = 2048
+    public static let encoderNumLayers = 24
+    public static let encoderNumHeads = 16
 
     // MARK: Decoder (LLM)
 
-    public static let hiddenSize = 1024
-    public static let intermediateSize = 3072
+    public static let hiddenSize = 2048
+    public static let intermediateSize = 6144
     public static let numDecoderLayers = 28
     public static let numAttentionHeads = 16
     public static let numKVHeads = 8
@@ -103,6 +103,7 @@ public enum Qwen3AsrConfig {
         case hungarian = "hu"
         case macedonian = "mk"
         case romanian = "ro"
+        case hebrew = "he"
 
         /// English name for the language (used in Qwen3-ASR prompts).
         public var englishName: String {
@@ -137,6 +138,7 @@ public enum Qwen3AsrConfig {
             case .hungarian: return "Hungarian"
             case .macedonian: return "Macedonian"
             case .romanian: return "Romanian"
+            case .hebrew: return "Hebrew"
             }
         }
 
