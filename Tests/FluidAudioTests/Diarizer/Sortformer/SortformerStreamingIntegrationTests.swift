@@ -1,6 +1,5 @@
-import XCTest
-
 @preconcurrency @testable import FluidAudio
+import XCTest
 
 @MainActor
 final class SortformerStreamingIntegrationTests: XCTestCase {
