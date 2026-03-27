@@ -50,13 +50,13 @@ public enum StreamingChunkSize: Sendable {
     /// Calculated from mel frames: (mel_frames - 1) * hop_length for center-padded mel spectrogram
     public var chunkSamples: Int {
         switch self {
-        case .ms160: return 2560  // (17-1) * 160 = 2560 samples (160ms)
+        case .ms160: return 2720  // 17 * 160 = 2720 samples (170ms)
         case .ms320:
             // 320ms mode: 64 mel frames from NeMo's streaming_cfg.chunk_size[1]
-            // Formula: (mel_frames - 1) * hop_length = (64-1) * 160 = 10080 samples
-            // This is ~630ms of audio per chunk (but 320ms latency due to shift)
-            return 10080
-        case .ms1280: return 20480  // (129-1) * 160 = 20480 samples (1280ms)
+            // computeFlat uses: numFrames = audioCount / hopLength
+            // So we need: 64 * 160 = 10240 samples to get exactly 64 mel frames
+            return 10240
+        case .ms1280: return 20640  // 129 * 160 = 20640 samples (1290ms)
         }
     }
 
@@ -446,17 +446,9 @@ public actor StreamingEouAsrManager {
         // A. Compute mel spectrogram with native Swift implementation (NeMo-matching)
         let (melFlat, melLength, numFrames) = melProcessor.computeFlat(audio: samples)
 
-        // Pad to expected frame count for this chunk size.
-        // Short audio may produce fewer frames than the model's fixed input shape requires.
-        let expectedFrames = chunkSize.melFrames
-        let targetFrames = max(numFrames, expectedFrames)
-
-        // Create MLMultiArray for mel: [1, 128, targetFrames]
-        let mel = try MLMultiArray(shape: [1, 128, NSNumber(value: targetFrames)], dataType: .float32)
+        // Create MLMultiArray for mel: [1, 128, numFrames]
+        let mel = try MLMultiArray(shape: [1, 128, NSNumber(value: numFrames)], dataType: .float32)
         let melPtr = mel.dataPointer.bindMemory(to: Float.self, capacity: mel.count)
-
-        // Zero-fill first (handles padding for short audio)
-        melPtr.initialize(repeating: 0, count: 128 * targetFrames)
 
         // AudioMelSpectrogram returns [nMels, T] row-major (mel bin, then time)
         // CoreML expects [1, 128, T] which is the same layout
