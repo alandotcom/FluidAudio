@@ -16,6 +16,17 @@ public class NemotronBenchmark {
         public init() {}
     }
 
+    private struct BenchmarkResults: Codable {
+        let chunkSize: Int
+        let filesProcessed: Int
+        let totalWords: Int
+        let totalErrors: Int
+        let wer: Double
+        let audioDuration: Double
+        let processingTime: Double
+        let rtfx: Double
+    }
+
     private let config: Config
 
     public init(config: Config = Config()) {
@@ -187,6 +198,29 @@ public class NemotronBenchmark {
             logger.info("Audio duration:     \(String(format: "%.1f", totalAudioDuration))s")
             logger.info("Processing time:    \(String(format: "%.1f", totalProcessingTime))s")
             logger.info("RTFx:               \(String(format: "%.1f", rtfx))x")
+
+            // Save JSON results
+            let jsonOutput = BenchmarkResults(
+                chunkSize: config.chunkSize.rawValue,
+                filesProcessed: filesToProcess.count,
+                totalWords: totalWords,
+                totalErrors: totalErrors,
+                wer: finalWer,
+                audioDuration: totalAudioDuration,
+                processingTime: totalProcessingTime,
+                rtfx: rtfx
+            )
+
+            do {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = .prettyPrinted
+                let data = try encoder.encode(jsonOutput)
+                let outputPath = "/tmp/nemotron_\(config.chunkSize.rawValue)ms_benchmark.json"
+                try data.write(to: URL(fileURLWithPath: outputPath))
+                print("Results saved to \(outputPath)")
+            } catch {
+                logger.error("Failed to save JSON: \(error)")
+            }
 
         } catch {
             logger.error("Benchmark failed: \(error)")
