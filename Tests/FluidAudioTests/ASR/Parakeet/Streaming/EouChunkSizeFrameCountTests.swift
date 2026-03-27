@@ -14,7 +14,8 @@ final class EouChunkSizeFrameCountTests: XCTestCase {
 
         XCTAssertEqual(
             actualFrames, expectedFrames,
-            "160ms chunk (\(chunkSize.chunkSamples) samples) should produce \(expectedFrames) mel frames, got \(actualFrames)")
+            "160ms chunk (\(chunkSize.chunkSamples) samples) should produce \(expectedFrames) mel frames, got \(actualFrames)"
+        )
     }
 
     func testFrameCount320ms() {
@@ -24,7 +25,8 @@ final class EouChunkSizeFrameCountTests: XCTestCase {
 
         XCTAssertEqual(
             actualFrames, expectedFrames,
-            "320ms chunk (\(chunkSize.chunkSamples) samples) should produce \(expectedFrames) mel frames, got \(actualFrames)")
+            "320ms chunk (\(chunkSize.chunkSamples) samples) should produce \(expectedFrames) mel frames, got \(actualFrames)"
+        )
     }
 
     func testFrameCount1280ms() {
@@ -34,13 +36,14 @@ final class EouChunkSizeFrameCountTests: XCTestCase {
 
         XCTAssertEqual(
             actualFrames, expectedFrames,
-            "1280ms chunk (\(chunkSize.chunkSamples) samples) should produce \(expectedFrames) mel frames, got \(actualFrames)")
+            "1280ms chunk (\(chunkSize.chunkSamples) samples) should produce \(expectedFrames) mel frames, got \(actualFrames)"
+        )
     }
 
     /// Test all chunk sizes with 10 different audio lengths to ensure stability
     func testAllChunkSizesWithVariedLengths() {
         let testLengths = [
-            1000, 2000, 5000, 8000, 10080, 12000, 15000, 20000, 25000, 30000
+            1000, 2000, 5000, 8000, 10080, 12000, 15000, 20000, 25000, 30000,
         ]
 
         for chunkSize in [StreamingChunkSize.ms160, .ms320, .ms1280] {
