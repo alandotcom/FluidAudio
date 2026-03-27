@@ -49,18 +49,17 @@ public actor NemotronStreamingAsrManager {
     /// to determine which HuggingFace repo to download from in `loadModels()`.
     internal var requestedChunkSize: NemotronChunkSize?
 
-    /// Set the requested chunk size (used by factory before loadModels)
-    internal func setRequestedChunkSize(_ chunkSize: NemotronChunkSize) {
-        self.requestedChunkSize = chunkSize
-    }
-
     // Stats
     internal var processedChunks: Int = 0
 
     public private(set) var mlConfiguration: MLModelConfiguration
 
-    public init(configuration: MLModelConfiguration = MLModelConfiguration()) {
+    public init(
+        configuration: MLModelConfiguration = MLModelConfiguration(),
+        requestedChunkSize: NemotronChunkSize? = nil
+    ) {
         self.mlConfiguration = configuration
+        self.requestedChunkSize = requestedChunkSize
         self.config = NemotronStreamingConfig()
         self.lastToken = Int32(config.blankIdx)
     }
