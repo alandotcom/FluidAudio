@@ -21,6 +21,8 @@ public enum Repo: String, CaseIterable {
     case qwen3AsrInt8 = "FluidInference/qwen3-asr-0.6b-coreml/int8"
     case multilingualG2p = "FluidInference/charsiu-g2p-byt5-coreml"
     case parakeetTdtCtc110m = "FluidInference/parakeet-tdt-ctc-110m-coreml"
+    case caspiAsr = "alandotcom/caspi-1.7b-coreml/int8"
+    case caspiAsrF32 = "alandotcom/caspi-1.7b-coreml/f32"
 
     /// Repository slug (without owner)
     public var name: String {
@@ -63,6 +65,10 @@ public enum Repo: String, CaseIterable {
             return "charsiu-g2p-byt5-coreml"
         case .parakeetTdtCtc110m:
             return "parakeet-tdt-ctc-110m-coreml"
+        case .caspiAsr:
+            return "caspi-1.7b-coreml/int8"
+        case .caspiAsrF32:
+            return "caspi-1.7b-coreml/f32"
         }
     }
 
@@ -85,6 +91,8 @@ public enum Repo: String, CaseIterable {
             return "FluidInference/qwen3-asr-0.6b-coreml"
         case .parakeetTdtCtc110m:
             return "FluidInference/parakeet-tdt-ctc-110m-coreml"
+        case .caspiAsr, .caspiAsrF32:
+            return "alandotcom/caspi-1.7b-coreml"
         default:
             return "FluidInference/\(name)"
         }
@@ -107,6 +115,10 @@ public enum Repo: String, CaseIterable {
             return "nemotron_coreml_1120ms"
         case .nemotronStreaming560:
             return "nemotron_coreml_560ms"
+        case .caspiAsr:
+            return "int8"
+        case .caspiAsrF32:
+            return "f32"
         default:
             return nil
         }
@@ -135,6 +147,10 @@ public enum Repo: String, CaseIterable {
             return "parakeet-ctc-0.6b-coreml"
         case .parakeetTdtCtc110m:
             return "parakeet-tdt-ctc-110m"
+        case .caspiAsr:
+            return "caspi-1.7b/int8"
+        case .caspiAsrF32:
+            return "caspi-1.7b/f32"
         default:
             return name.replacingOccurrences(of: "-coreml", with: "")
         }
@@ -430,7 +446,7 @@ public enum ModelNames {
         }
     }
 
-    /// Qwen3-ASR model names
+    /// Qwen3-ASR model names (shared by 0.6B and 1.7B Caspi)
     public enum Qwen3ASR {
         public static let audioEncoderFile = "qwen3_asr_audio_encoder_v2.mlmodelc"
         public static let embeddingFile = "qwen3_asr_embedding.mlmodelc"
@@ -609,7 +625,7 @@ public enum ModelNames {
                 return [variant + ".mlmodelc", variant + ".json"]
             }
             return ModelNames.LSEEND.requiredModels
-        case .qwen3Asr, .qwen3AsrInt8:
+        case .qwen3Asr, .qwen3AsrInt8, .caspiAsr, .caspiAsrF32:
             return ModelNames.Qwen3ASR.requiredModelsFull
         case .multilingualG2p:
             return ModelNames.MultilingualG2P.requiredModels

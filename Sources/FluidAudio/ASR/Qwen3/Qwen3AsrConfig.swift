@@ -2,11 +2,15 @@ import Foundation
 
 // MARK: - Qwen3-ASR Model Configuration
 
-/// Configuration constants for the Qwen3-ASR-0.6B CoreML model.
+/// Configuration constants for Qwen3-ASR CoreML models (0.6B and 1.7B Caspi).
 ///
 /// Architecture: audio_encoder -> embedding + merge -> 28 decoder layers -> lm_head
 /// The audio encoder processes mel spectrograms in fixed-size windows.
 /// The LLM decoder generates text autoregressively with KV-cache.
+///
+/// Model-size-dependent dimensions (encoderOutputDim, hiddenSize) are read at
+/// runtime from the loaded embedding weights file. The constants below are for
+/// the 0.6B model; the 1.7B Caspi model uses encoderOutputDim=2048, hiddenSize=2048.
 public enum Qwen3AsrConfig {
     // MARK: Audio
 
@@ -23,14 +27,14 @@ public enum Qwen3AsrConfig {
     /// Output frames per mel window: ceil(100/8) = 13.
     public static let outputFramesPerWindow = (melWindowSize + convDownsampleFactor - 1) / convDownsampleFactor
 
-    // MARK: Encoder
+    // MARK: Encoder (0.6B defaults)
 
     public static let encoderDModel = 896
     public static let encoderOutputDim = 1024
     public static let encoderNumLayers = 18
     public static let encoderNumHeads = 14
 
-    // MARK: Decoder (LLM)
+    // MARK: Decoder (LLM) (0.6B defaults)
 
     public static let hiddenSize = 1024
     public static let intermediateSize = 3072
@@ -70,7 +74,7 @@ public enum Qwen3AsrConfig {
 
     // MARK: - Supported Languages
 
-    /// Supported languages for Qwen3-ASR (30 languages + 22 Chinese dialects).
+    /// Supported languages for Qwen3-ASR (30 languages + Hebrew via Caspi 1.7B).
     /// Use ISO 639-1 codes or English names. Pass nil for automatic detection.
     public enum Language: String, CaseIterable, Sendable {
         case chinese = "zh"
@@ -103,6 +107,7 @@ public enum Qwen3AsrConfig {
         case hungarian = "hu"
         case macedonian = "mk"
         case romanian = "ro"
+        case hebrew = "he"
 
         /// English name for the language (used in Qwen3-ASR prompts).
         public var englishName: String {
@@ -137,6 +142,7 @@ public enum Qwen3AsrConfig {
             case .hungarian: return "Hungarian"
             case .macedonian: return "Macedonian"
             case .romanian: return "Romanian"
+            case .hebrew: return "Hebrew"
             }
         }
 

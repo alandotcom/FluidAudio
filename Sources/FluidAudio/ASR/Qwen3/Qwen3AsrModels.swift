@@ -4,18 +4,24 @@ import OSLog
 
 private let logger = Logger(subsystem: "FluidAudio", category: "Qwen3AsrModels")
 
-/// Qwen3-ASR model variant (precision).
+/// Qwen3-ASR model variant (precision and model size).
 public enum Qwen3AsrVariant: String, CaseIterable, Sendable {
-    /// Full precision (FP16 weights). Best speed, ~1.75 GB.
+    /// 0.6B full precision (FP16 weights). Best speed, ~1.75 GB.
     case f32
-    /// Int8 quantized weights. Half the RAM (~900 MB), same quality.
+    /// 0.6B int8 quantized weights. Half the RAM (~900 MB), same quality.
     case int8
+    /// Caspi 1.7B full precision (FP16 weights). Hebrew ASR.
+    case caspiF32
+    /// Caspi 1.7B int8 quantized weights. Hebrew ASR.
+    case caspiInt8
 
     /// Corresponding HuggingFace model repository.
     public var repo: Repo {
         switch self {
         case .f32: return .qwen3Asr
         case .int8: return .qwen3AsrInt8
+        case .caspiF32: return .caspiAsrF32
+        case .caspiInt8: return .caspiAsr
         }
     }
 }
@@ -28,9 +34,9 @@ public enum Qwen3AsrVariant: String, CaseIterable, Sendable {
 /// eliminating the embedding CoreML model. Reduces CoreML calls from 3 to 2 per token.
 ///
 /// Components:
-/// - `audioEncoder`: mel spectrogram -> 1024-dim audio features (single window)
+/// - `audioEncoder`: mel spectrogram -> audio features (single window)
 /// - `decoderStateful`: stateful decoder with fused lmHead (outputs logits directly)
-/// - `embeddingWeights`: [151936, 1024] float16 matrix for Swift-side embedding lookup
+/// - `embeddingWeights`: float16 matrix for Swift-side embedding lookup
 @available(macOS 15, iOS 18, *)
 public struct Qwen3AsrModels: Sendable {
     public let audioEncoder: MLModel
@@ -106,7 +112,7 @@ public struct Qwen3AsrModels: Sendable {
     /// Download Qwen3-ASR models from HuggingFace.
     ///
     /// - Parameters:
-    ///   - variant: Model variant to download (`.f32` or `.int8`).
+    ///   - variant: Model variant to download (`.f32`, `.int8`, `.caspiF32`, `.caspiInt8`).
     ///   - directory: Target directory. Uses default cache directory if nil.
     ///   - force: Force re-download even if models exist.
     ///   - progressHandler: Optional callback for download progress updates.
@@ -274,19 +280,14 @@ public final class EmbeddingWeights: Sendable {
         self.vocabSize = Int(vocab)
         self.hiddenSize = Int(hidden)
 
-        // Validate against config
+        // Validate vocab size (shared across all Qwen3-ASR model sizes)
         guard vocabSize == Qwen3AsrConfig.vocabSize else {
             throw Qwen3AsrError.generationFailed(
-                "Embedding vocab size \(vocabSize) != config \(Qwen3AsrConfig.vocabSize)"
-            )
-        }
-        guard hiddenSize == Qwen3AsrConfig.hiddenSize else {
-            throw Qwen3AsrError.generationFailed(
-                "Embedding hidden size \(hiddenSize) != config \(Qwen3AsrConfig.hiddenSize)"
+                "Embedding vocab size \(vocabSize) != expected \(Qwen3AsrConfig.vocabSize)"
             )
         }
 
-        // Verify file size
+        // Verify file size matches header dimensions
         let expectedSize = 8 + vocabSize * hiddenSize * 2  // header + float16 data
         guard fileData.count == expectedSize else {
             throw Qwen3AsrError.generationFailed(
