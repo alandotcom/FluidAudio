@@ -776,7 +776,10 @@ public final class SortformerDiarizer: Diarizer {
 
         featureBuffer.append(contentsOf: mel)
 
-        let samplesConsumed = melLength * config.melStride
+        // Reverse the center-padded frame count formula to get actual samples consumed:
+        // numFrames = 1 + (audioCount + nFFT - winLength) / hopLength
+        // => audioCount = (numFrames - 1) * hopLength + winLength - nFFT
+        let samplesConsumed = (melLength - 1) * config.melStride + config.melWindow - melSpectrogram.nFFT
 
         if samplesConsumed <= audioBuffer.count {
             lastAudioSample = audioBuffer[samplesConsumed - 1]
@@ -881,7 +884,9 @@ public final class SortformerDiarizer: Diarizer {
         guard audioBuffer.count >= config.melWindow else {
             return 0
         }
-        return audioBuffer.count / config.melStride
+        // Use center-padded frame count formula matching AudioMelSpectrogram.computeFlatTransposed
+        let paddedCount = audioBuffer.count + melSpectrogram.nFFT
+        return 1 + (paddedCount - config.melWindow) / config.melStride
     }
 
     /// Get next chunk features (for testing)

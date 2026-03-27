@@ -28,7 +28,7 @@ public final class AudioMelSpectrogram {
 
     // Config
     private let sampleRate: Int
-    private let nFFT: Int
+    public let nFFT: Int
     private let hopLength: Int  // window_stride * sample_rate
     private let winLength: Int  // window_size * sample_rate
     private let fMin: Float = 0.0
