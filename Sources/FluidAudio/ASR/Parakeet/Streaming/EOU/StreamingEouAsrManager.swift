@@ -446,9 +446,17 @@ public actor StreamingEouAsrManager {
         // A. Compute mel spectrogram with native Swift implementation (NeMo-matching)
         let (melFlat, melLength, numFrames) = melProcessor.computeFlat(audio: samples)
 
-        // Create MLMultiArray for mel: [1, 128, numFrames]
-        let mel = try MLMultiArray(shape: [1, 128, NSNumber(value: numFrames)], dataType: .float32)
+        // Pad to expected frame count for this chunk size.
+        // Short audio may produce fewer frames than the model's fixed input shape requires.
+        let expectedFrames = chunkSize.melFrames
+        let targetFrames = max(numFrames, expectedFrames)
+
+        // Create MLMultiArray for mel: [1, 128, targetFrames]
+        let mel = try MLMultiArray(shape: [1, 128, NSNumber(value: targetFrames)], dataType: .float32)
         let melPtr = mel.dataPointer.bindMemory(to: Float.self, capacity: mel.count)
+
+        // Zero-fill first (handles padding for short audio)
+        melPtr.initialize(repeating: 0, count: 128 * targetFrames)
 
         // AudioMelSpectrogram returns [nMels, T] row-major (mel bin, then time)
         // CoreML expects [1, 128, T] which is the same layout
