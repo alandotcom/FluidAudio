@@ -421,10 +421,10 @@ Hardware: Apple M2, 2022, macOS 26
 
 ### LibriSpeech test-clean (2620 files, 5.40h audio)
 
-| Chunk Size | WER (Avg) | RTFx | Total Time |
-|------------|-----------|------|------------|
-| 320ms      | 4.87%     | 12.48x | 1558s (26m) |
-| 160ms      | 8.29%     | 4.78x  | 4070s (68m) |
+| Chunk Size | WER (Avg) | Median WER | RTFx | Total Time |
+|------------|-----------|------------|------|------------|
+| 320ms      | 4.88%     | 0.00%      | 19.25x | 1015s (16.9m) |
+| 160ms      | 8.23%     | 5.26%      | 5.78x  | 3387s (56.4m) |
 
 
 ```bash
