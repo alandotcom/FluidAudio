@@ -46,29 +46,40 @@ public actor Qwen3AsrManager {
     ///   - language: Optional language hint (ISO code like "en", "zh", or English name like "English").
     ///               Pass nil for automatic language detection.
     ///   - maxNewTokens: Maximum number of tokens to generate.
+    ///   - beamWidth: Number of beams for beam search (1 = greedy, default).
+    ///   - repetitionPenalty: Penalty for repeated tokens (1.0 = no penalty, default).
     /// - Returns: Transcribed text.
     public func transcribe(
         audioSamples: [Float],
         language: String? = nil,
-        maxNewTokens: Int = 512
+        maxNewTokens: Int = 512,
+        beamWidth: Int = 1,
+        repetitionPenalty: Float = 1.0
     ) async throws -> String {
         let mel = melExtractor.compute(audio: audioSamples)
         guard !mel.isEmpty else {
             throw Qwen3AsrError.generationFailed("Audio too short to extract mel spectrogram")
         }
-        return try await transcribe(melSpectrogram: mel, language: language, maxNewTokens: maxNewTokens)
+        return try await transcribe(
+            melSpectrogram: mel, language: language, maxNewTokens: maxNewTokens,
+            beamWidth: beamWidth, repetitionPenalty: repetitionPenalty
+        )
     }
 
     /// Transcribe raw audio samples with typed language.
     public func transcribe(
         audioSamples: [Float],
         language: Qwen3AsrConfig.Language?,
-        maxNewTokens: Int = 512
+        maxNewTokens: Int = 512,
+        beamWidth: Int = 1,
+        repetitionPenalty: Float = 1.0
     ) async throws -> String {
         try await transcribe(
             audioSamples: audioSamples,
             language: language?.englishName,
-            maxNewTokens: maxNewTokens
+            maxNewTokens: maxNewTokens,
+            beamWidth: beamWidth,
+            repetitionPenalty: repetitionPenalty
         )
     }
 
@@ -76,7 +87,9 @@ public actor Qwen3AsrManager {
     public func transcribe(
         melSpectrogram: [[Float]],
         language: String? = nil,
-        maxNewTokens: Int = 512
+        maxNewTokens: Int = 512,
+        beamWidth: Int = 1,
+        repetitionPenalty: Float = 1.0
     ) async throws -> String {
         guard let models = models else {
             throw Qwen3AsrError.generationFailed("Models not loaded")
@@ -115,12 +128,25 @@ public actor Qwen3AsrManager {
 
         // Step 4: Autoregressive generation
         let t4 = CFAbsoluteTimeGetCurrent()
-        let generatedTokenIds = try generate(
-            initialEmbeddings: initialEmbeddings,
-            promptLength: promptTokens.count,
-            maxNewTokens: maxNewTokens,
-            models: models
-        )
+        let generatedTokenIds: [Int]
+        if beamWidth > 1 {
+            generatedTokenIds = try generateBeamSearch(
+                initialEmbeddings: initialEmbeddings,
+                promptLength: promptTokens.count,
+                maxNewTokens: maxNewTokens,
+                beamWidth: beamWidth,
+                repetitionPenalty: repetitionPenalty,
+                models: models
+            )
+        } else {
+            generatedTokenIds = try generate(
+                initialEmbeddings: initialEmbeddings,
+                promptLength: promptTokens.count,
+                maxNewTokens: maxNewTokens,
+                repetitionPenalty: repetitionPenalty,
+                models: models
+            )
+        }
         let generateTime = CFAbsoluteTimeGetCurrent() - t4
 
         // Step 5: Decode tokens to text
@@ -128,7 +154,7 @@ public actor Qwen3AsrManager {
 
         let elapsed = CFAbsoluteTimeGetCurrent() - start
         logger.debug(
-            "Timing: audio=\(String(format: "%.2f", audioEncodeTime))s embed=\(String(format: "%.2f", embedTime))s gen=\(String(format: "%.2f", generateTime))s total=\(String(format: "%.2f", elapsed))s prompt=\(promptTokens.count) decoded=\(generatedTokenIds.count)"
+            "Timing: audio=\(String(format: "%.2f", audioEncodeTime))s embed=\(String(format: "%.2f", embedTime))s gen=\(String(format: "%.2f", generateTime))s total=\(String(format: "%.2f", elapsed))s prompt=\(promptTokens.count) decoded=\(generatedTokenIds.count) beams=\(beamWidth)"
         )
 
         return text
@@ -312,6 +338,7 @@ public actor Qwen3AsrManager {
         initialEmbeddings: [[Float]],
         promptLength: Int,
         maxNewTokens: Int,
+        repetitionPenalty: Float = 1.0,
         models: Qwen3AsrModels
     ) throws -> [Int] {
         let hiddenSize = self.hiddenSize
@@ -412,6 +439,11 @@ public actor Qwen3AsrManager {
 
             currentPosition += 1
 
+            // Apply repetition penalty
+            if repetitionPenalty != 1.0 {
+                applyRepetitionPenalty(logits: logits, tokens: generatedTokens, penalty: repetitionPenalty)
+            }
+
             let tokenId = argmaxFromLogits(logits)
 
             if Qwen3AsrConfig.eosTokenIds.contains(tokenId) {
@@ -427,6 +459,282 @@ public actor Qwen3AsrManager {
             "Decode: \(String(format: "%.3f", decodeTime))s for \(generatedTokens.count) tokens (\(String(format: "%.1f", perToken * 1000))ms/tok)"
         )
         return generatedTokens
+    }
+
+    // MARK: - Beam Search Generation
+
+    /// KV cache state buffer names for all decoder layers.
+    private static let kvCacheStateNames: [String] = {
+        (0..<Qwen3AsrConfig.numDecoderLayers).flatMap { i in
+            ["k_cache_\(i)", "v_cache_\(i)"]
+        }
+    }()
+
+    /// A single beam hypothesis during beam search.
+    private struct Beam {
+        var tokens: [Int]
+        var logProb: Float
+        var state: MLState
+        var position: Int
+        var isFinished: Bool
+
+        var lengthNormalizedScore: Float {
+            logProb / Float(max(tokens.count, 1))
+        }
+    }
+
+    /// Copy all KV cache buffers from one MLState to another.
+    private func cloneState(from source: MLState, to destination: MLState) {
+        for name in Self.kvCacheStateNames {
+            source.withMultiArray(for: name) { srcBuffer in
+                destination.withMultiArray(for: name) { dstBuffer in
+                    memcpy(dstBuffer.dataPointer, srcBuffer.dataPointer, srcBuffer.count * 2)  // fp16 = 2 bytes
+                }
+            }
+        }
+    }
+
+    /// Get top-k token IDs and their log-probabilities from logits.
+    private func topKFromLogits(_ logits: MLMultiArray, k: Int) -> [(tokenId: Int, logProb: Float)] {
+        let vocabSize = Qwen3AsrConfig.vocabSize
+        let ptr = logits.dataPointer.bindMemory(to: Float.self, capacity: vocabSize)
+
+        // Compute log-softmax: logProb[i] = logits[i] - log(sum(exp(logits)))
+        // First find max for numerical stability
+        var maxVal: Float = 0
+        var maxIdx: vDSP_Length = 0
+        vDSP_maxvi(ptr, 1, &maxVal, &maxIdx, vDSP_Length(vocabSize))
+
+        // Compute shifted exp and sum
+        var logSumExp: Float = 0
+        for i in 0..<vocabSize {
+            logSumExp += exp(ptr[i] - maxVal)
+        }
+        logSumExp = maxVal + log(logSumExp)
+
+        // Collect top-k using partial sort
+        var candidates: [(tokenId: Int, logProb: Float)] = []
+        candidates.reserveCapacity(vocabSize)
+        for i in 0..<vocabSize {
+            candidates.append((tokenId: i, logProb: ptr[i] - logSumExp))
+        }
+        // Partial sort: move top k to front
+        let effectiveK = min(k, vocabSize)
+        candidates.sort { $0.logProb > $1.logProb }
+        return Array(candidates.prefix(effectiveK))
+    }
+
+    /// Apply repetition penalty to logits for recently generated tokens.
+    private func applyRepetitionPenalty(logits: MLMultiArray, tokens: [Int], penalty: Float, window: Int = 8) {
+        let ptr = logits.dataPointer.bindMemory(to: Float.self, capacity: Qwen3AsrConfig.vocabSize)
+        for token in Set(tokens.suffix(window)) {
+            if ptr[token] > 0 {
+                ptr[token] /= penalty
+            } else {
+                ptr[token] *= penalty
+            }
+        }
+    }
+
+    /// Beam search generation with KV cache cloning.
+    private func generateBeamSearch(
+        initialEmbeddings: [[Float]],
+        promptLength: Int,
+        maxNewTokens: Int,
+        beamWidth: Int,
+        repetitionPenalty: Float,
+        models: Qwen3AsrModels
+    ) throws -> [Int] {
+        let hiddenSize = self.hiddenSize
+
+        guard promptLength > 0 else {
+            throw Qwen3AsrError.generationFailed("Empty prompt")
+        }
+
+        let effectiveMaxNew = min(maxNewTokens, Qwen3AsrConfig.maxCacheSeqLen - promptLength)
+        guard effectiveMaxNew > 0 else {
+            throw Qwen3AsrError.generationFailed(
+                "Prompt length \(promptLength) exceeds cache capacity \(Qwen3AsrConfig.maxCacheSeqLen)"
+            )
+        }
+
+        // ---- Prefill (once) ----
+        let prefillStart = CFAbsoluteTimeGetCurrent()
+        let prefillState = models.decoderStateful.makeState()
+
+        let (prefillCos, prefillSin) = rope.computeRange(startPosition: 0, count: promptLength)
+        let hiddenArray = try createBatchedHiddenArray(
+            embeddings: Array(initialEmbeddings[0..<promptLength])
+        )
+        let cosArray = try createBatchedPositionArray(values: prefillCos, seqLen: promptLength)
+        let sinArray = try createBatchedPositionArray(values: prefillSin, seqLen: promptLength)
+        let prefillMask = try createPrefillMask(seqLen: promptLength)
+
+        let prefillLogits = try runStatefulDecoder(
+            hiddenStates: hiddenArray,
+            positionCos: cosArray,
+            positionSin: sinArray,
+            mask: prefillMask,
+            state: prefillState,
+            models: models
+        )
+
+        let prefillTime = CFAbsoluteTimeGetCurrent() - prefillStart
+        logger.debug("Beam prefill: \(String(format: "%.3f", prefillTime))s for \(promptLength) tokens")
+
+        // ---- Initialize beams from top-k of prefill logits ----
+        let initialCandidates = topKFromLogits(prefillLogits, k: beamWidth)
+
+        // Check if all initial candidates are EOS
+        let nonEosCandidates = initialCandidates.filter { !Qwen3AsrConfig.eosTokenIds.contains($0.tokenId) }
+        if nonEosCandidates.isEmpty {
+            return []
+        }
+
+        // Create beam states by cloning prefill state
+        let cloneStart = CFAbsoluteTimeGetCurrent()
+        var beams: [Beam] = []
+        for candidate in initialCandidates {
+            let beamState = models.decoderStateful.makeState()
+            cloneState(from: prefillState, to: beamState)
+            beams.append(Beam(
+                tokens: [candidate.tokenId],
+                logProb: candidate.logProb,
+                state: beamState,
+                position: promptLength,
+                isFinished: Qwen3AsrConfig.eosTokenIds.contains(candidate.tokenId)
+            ))
+        }
+        let cloneTime = CFAbsoluteTimeGetCurrent() - cloneStart
+        logger.debug("Beam clone: \(String(format: "%.3f", cloneTime))s for \(beams.count) beams")
+
+        // ---- Beam search decode ----
+        let decodeStart = CFAbsoluteTimeGetCurrent()
+
+        for step in 1..<effectiveMaxNew {
+            // If all beams are finished, stop
+            if beams.allSatisfy({ $0.isFinished }) { break }
+
+            var allCandidates: [(beamIdx: Int, tokenId: Int, logProb: Float, fromFinished: Bool)] = []
+
+            for (beamIdx, beam) in beams.enumerated() {
+                if beam.isFinished {
+                    // Finished beams carry forward with their current score
+                    allCandidates.append((beamIdx: beamIdx, tokenId: -1, logProb: beam.logProb, fromFinished: true))
+                    continue
+                }
+
+                guard let lastTokenId = beam.tokens.last else { continue }
+
+                // Embed last token
+                let nextEmbedding = models.embeddingWeights.embedding(for: lastTokenId)
+                let decHidden = try MLMultiArray(
+                    shape: [1, 1, NSNumber(value: hiddenSize)], dataType: .float32
+                )
+                let decHiddenPtr = decHidden.dataPointer.bindMemory(to: Float.self, capacity: hiddenSize)
+                nextEmbedding.withUnsafeBufferPointer { src in
+                    _ = memcpy(decHiddenPtr, src.baseAddress!, hiddenSize * MemoryLayout<Float>.size)
+                }
+
+                let decCos = try MLMultiArray(
+                    shape: [1, 1, NSNumber(value: Qwen3AsrConfig.headDim)], dataType: .float32
+                )
+                let decSin = try MLMultiArray(
+                    shape: [1, 1, NSNumber(value: Qwen3AsrConfig.headDim)], dataType: .float32
+                )
+                let cosPtr = decCos.dataPointer.bindMemory(to: Float.self, capacity: Qwen3AsrConfig.headDim)
+                let sinPtr = decSin.dataPointer.bindMemory(to: Float.self, capacity: Qwen3AsrConfig.headDim)
+                rope.fill(position: beam.position, cosPtr: cosPtr, sinPtr: sinPtr)
+
+                let endStep = beam.position + 1
+                let mask = try createDecodeMask(endStep: endStep)
+
+                let logits = try runStatefulDecoder(
+                    hiddenStates: decHidden,
+                    positionCos: decCos,
+                    positionSin: decSin,
+                    mask: mask,
+                    state: beam.state,
+                    models: models
+                )
+
+                // Apply repetition penalty
+                if repetitionPenalty != 1.0 {
+                    applyRepetitionPenalty(logits: logits, tokens: beam.tokens, penalty: repetitionPenalty)
+                }
+
+                // Get top-k expansions
+                let expansions = topKFromLogits(logits, k: beamWidth)
+                for expansion in expansions {
+                    allCandidates.append((
+                        beamIdx: beamIdx,
+                        tokenId: expansion.tokenId,
+                        logProb: beam.logProb + expansion.logProb,
+                        fromFinished: false
+                    ))
+                }
+            }
+
+            // Score and select top beamWidth candidates (length-normalized)
+            allCandidates.sort { a, b in
+                let aLen = Float(max(beams[a.beamIdx].tokens.count + (a.fromFinished ? 0 : 1), 1))
+                let bLen = Float(max(beams[b.beamIdx].tokens.count + (b.fromFinished ? 0 : 1), 1))
+                return (a.logProb / aLen) > (b.logProb / bLen)
+            }
+            let selected = Array(allCandidates.prefix(beamWidth))
+
+            // Build new beams from selected candidates
+            var newBeams: [Beam] = []
+            // Track which source beam states we need to clone vs reuse
+            var sourceUsageCount: [Int: Int] = [:]
+            for candidate in selected {
+                sourceUsageCount[candidate.beamIdx, default: 0] += 1
+            }
+
+            for candidate in selected {
+                if candidate.fromFinished {
+                    // Carry forward finished beam
+                    let source = beams[candidate.beamIdx]
+                    newBeams.append(source)
+                    continue
+                }
+
+                let source = beams[candidate.beamIdx]
+                let needsClone = sourceUsageCount[candidate.beamIdx]! > 1
+
+                let state: MLState
+                if needsClone {
+                    state = models.decoderStateful.makeState()
+                    cloneState(from: source.state, to: state)
+                    sourceUsageCount[candidate.beamIdx]! -= 1
+                } else {
+                    // Last (or only) use of this source — reuse state directly
+                    state = source.state
+                    sourceUsageCount[candidate.beamIdx]! -= 1
+                }
+
+                var newTokens = source.tokens
+                newTokens.append(candidate.tokenId)
+                let isEos = Qwen3AsrConfig.eosTokenIds.contains(candidate.tokenId)
+
+                newBeams.append(Beam(
+                    tokens: newTokens,
+                    logProb: candidate.logProb,
+                    state: state,
+                    position: source.position + 1,
+                    isFinished: isEos
+                ))
+            }
+
+            beams = newBeams
+        }
+
+        let decodeTime = CFAbsoluteTimeGetCurrent() - decodeStart
+        let bestBeam = beams.max(by: { $0.lengthNormalizedScore < $1.lengthNormalizedScore })!
+        logger.debug(
+            "Beam decode: \(String(format: "%.3f", decodeTime))s for \(bestBeam.tokens.count) tokens, \(beams.count) beams, best score=\(String(format: "%.3f", bestBeam.lengthNormalizedScore))"
+        )
+        return bestBeam.tokens
     }
 
     // MARK: - Stateful Decoder
