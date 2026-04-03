@@ -7,6 +7,7 @@ public enum Repo: String, CaseIterable {
     case parakeetV2 = "FluidInference/parakeet-tdt-0.6b-v2-coreml"
     case parakeetCtc110m = "FluidInference/parakeet-ctc-110m-coreml"
     case parakeetCtc06b = "FluidInference/parakeet-ctc-0.6b-coreml"
+    case parakeetCtcZhCn = "FluidInference/parakeet-ctc-0.6b-zh-cn-coreml"
     case parakeetEou160 = "FluidInference/parakeet-realtime-eou-120m-coreml/160ms"
     case parakeetEou320 = "FluidInference/parakeet-realtime-eou-120m-coreml/320ms"
     case parakeetEou1280 = "FluidInference/parakeet-realtime-eou-120m-coreml/1280ms"
@@ -35,6 +36,8 @@ public enum Repo: String, CaseIterable {
             return "parakeet-ctc-110m-coreml"
         case .parakeetCtc06b:
             return "parakeet-ctc-0.6b-coreml"
+        case .parakeetCtcZhCn:
+            return "parakeet-ctc-0.6b-zh-cn-coreml"
         case .parakeetEou160:
             return "parakeet-realtime-eou-120m-coreml/160ms"
         case .parakeetEou320:
@@ -133,6 +136,8 @@ public enum Repo: String, CaseIterable {
             return "parakeet-ctc-110m-coreml"
         case .parakeetCtc06b:
             return "parakeet-ctc-0.6b-coreml"
+        case .parakeetCtcZhCn:
+            return "parakeet-ctc-zh-cn"
         case .parakeetTdtCtc110m:
             return "parakeet-tdt-ctc-110m"
         default:
@@ -237,6 +242,30 @@ public enum ModelNames {
         public static let requiredModels: Set<String> = [
             melSpectrogramPath,
             audioEncoderPath,
+        ]
+    }
+
+    /// CTC zh-CN model names (full pipeline: Preprocessor + Encoder + CTC Decoder)
+    public enum CTCZhCn {
+        public static let preprocessor = "Preprocessor"
+        public static let encoder = "Encoder-v2-int8"  // Default to int8 quantized version
+        public static let encoderFp32 = "Encoder-v1-fp32"
+        public static let decoder = "Decoder"
+
+        public static let preprocessorFile = preprocessor + ".mlmodelc"
+        public static let encoderFile = encoder + ".mlmodelc"
+        public static let encoderFp32File = encoderFp32 + ".mlmodelc"
+        public static let decoderFile = decoder + ".mlmodelc"
+
+        // Vocabulary JSON path
+        public static let vocabularyFile = "vocab.json"
+
+        // Download both encoder variants (int8 and fp32) so users can choose at runtime
+        public static let requiredModels: Set<String> = [
+            preprocessorFile,
+            encoderFile,  // int8 encoder
+            encoderFp32File,  // fp32 encoder
+            decoderFile,
         ]
     }
 
@@ -579,6 +608,8 @@ public enum ModelNames {
             return ModelNames.ASR.requiredModelsFused
         case .parakeetCtc110m, .parakeetCtc06b:
             return ModelNames.CTC.requiredModels
+        case .parakeetCtcZhCn:
+            return ModelNames.CTCZhCn.requiredModels
         case .parakeetEou160, .parakeetEou320, .parakeetEou1280:
             return ModelNames.ParakeetEOU.requiredModels
         case .nemotronStreaming1120, .nemotronStreaming560:
